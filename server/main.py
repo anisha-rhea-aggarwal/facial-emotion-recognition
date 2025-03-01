@@ -1,36 +1,47 @@
 import json
-import io
 import base64
-
-from typing import Optional
-from fastapi import FastAPI, WebSocket
-
-import cv2
 import numpy as np
+import cv2
 from fer import FER
+from fastapi import FastAPI, WebSocket
 
 app = FastAPI()
 detector = FER()
 
-@app.websocket("/")
+# ✅ Add a root HTTP GET route (to prevent 404 Not Found)
+@app.get("/")
+async def root():
+    return {"message": "FastAPI WebSocket server is running!"}
+
+# ✅ WebSocket Route
+@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    #while True:
     try:
-        payload = await websocket.receive_text()
-        payload = json.loads(payload)
-        imageByt64 = payload['data']['image'].split(',')[1]
-        # decode and convert into image
-        image = np.fromstring(base64.b64decode(imageByt64), np.uint8)
-        image = cv2.imdecode(image, cv2.IMREAD_COLOR)
-        
-        # Detect Emotion via Tensorflow model
-        prediction = detector.detect_emotions(image)
-        response = {
-            "predictions": prediction[0]['emotions'],
-            "emotion": max(prediction[0]['emotions'], key=prediction[0]['emotions'].get)
-        }
-        await websocket.send_json(response)
-        websocket.close()
-    except:
-        websocket.close()
+        while True:
+            payload = await websocket.receive_text()
+            payload = json.loads(payload)
+
+            image_base64 = payload['data']['image'].split(',')[1]
+            image_data = base64.b64decode(image_base64)
+
+            # ✅ Use np.frombuffer (instead of deprecated np.fromstring)
+            image_np = np.frombuffer(image_data, np.uint8)
+            image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+
+            # Detect Emotion
+            prediction = detector.detect_emotions(image)
+            
+            if prediction:
+                response = {
+                    "predictions": prediction[0]['emotions'],
+                    "emotion": max(prediction[0]['emotions'], key=prediction[0]['emotions'].get)
+                }
+            else:
+                response = {"error": "No face detected"}
+
+            await websocket.send_json(response)
+
+    except Exception as e:
+        print(f"WebSocket error: {e}")  # ✅ Debugging
+        await websocket.close()
